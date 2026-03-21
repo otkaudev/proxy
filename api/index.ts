@@ -1,0 +1,808 @@
+import { Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
+import type { ContentfulStatusCode } from "hono/utils/http-status";
+import { handle } from "hono/vercel";
+
+export const config = {
+    runtime: "edge",
+};
+
+// ─── Default headers for upstream requests ────────────────────────────────────
+const DEFAULT_HEADERS: Record<string, string> = {
+    "user-agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+    accept: "*/*",
+    "accept-language": "en-US,en;q=0.5",
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "cross-site",
+};
+
+interface DomainGroup {
+    patterns: RegExp[];
+    origin: string;
+    referer: string;
+    customHeaders?: Record<string, string>;
+}
+
+const DOMAIN_GROUPS: DomainGroup[] = [
+    {
+        patterns: [/\.padorupado\.ru$/i, /\.kwikie\.ru$/i],
+        origin: "https://kwik.si",
+        referer: "https://kwik.si/",
+        customHeaders: { "cache-control": "no-cache", pragma: "no-cache" },
+    },
+    {
+        patterns: [/\.streamtape\.to$/i],
+        origin: "https://streamtape.to",
+        referer: "https://streamtape.to/",
+    },
+    {
+        patterns: [/vidcache\.net$/i],
+        origin: "https://www.animegg.org",
+        referer: "https://www.animegg.org/",
+    },
+    {
+        patterns: [
+            /krussdomi\.com$/i,
+            /revolutionizingtheweb\.xyz$/i,
+            /nextgentechnologytrends\.xyz$/i,
+            /smartinvestmentstrategies\.xyz$/i,
+            /creativedesignstudioxyz\.xyz$/i,
+            /breakingdigitalboundaries\.xyz$/i,
+            /ultimatetechinnovation\.xyz$/i,
+        ],
+        origin: "https://krussdomi.com",
+        referer: "https://krussdomi.com/",
+    },
+    {
+        patterns: [/\.akamaized\.net$/i],
+        origin: "https://players.akamai.com",
+        referer: "https://players.akamai.com/",
+    },
+    {
+        patterns: [
+            /(?:^|\.)shadowlandschronicles\./i,
+            /digitalshinecollective\.xyz$/i,
+            /thrivequesthub\.xyz$/i,
+            /novaedgelabs\.xyz$/i,
+        ],
+        origin: "https://cloudnestra.com",
+        referer: "https://cloudnestra.com/",
+    },
+    {
+        patterns: [/(?:^|\.)viddsn\./i, /\.anilike\.cyou$/i],
+        origin: "https://vidwish.live/",
+        referer: "https://vidwish.live/",
+    },
+    {
+        patterns: [/(?:^|\.)dotstream\./i, /(?:^|\.)playcloud1\./i],
+        origin: "https://megaplay.buzz/",
+        referer: "https://megaplay.buzz/",
+    },
+    {
+        patterns: [/\.cloudfront\.net$/i],
+        origin: "https://d2zihajmogu5jn.cloudfront.net",
+        referer: "https://d2zihajmogu5jn.cloudfront.net/",
+    },
+    {
+        patterns: [/\.ttvnw\.net$/i],
+        origin: "https://www.twitch.tv",
+        referer: "https://www.twitch.tv/",
+    },
+    {
+        patterns: [/\.xx\.fbcdn\.net$/i],
+        origin: "https://www.facebook.com",
+        referer: "https://www.facebook.com/",
+    },
+    {
+        patterns: [/\.anih1\.top$/i, /\.xyk3\.top$/i],
+        origin: "https://ee.anih1.top",
+        referer: "https://ee.anih1.top/",
+    },
+    {
+        patterns: [/\.premilkyway\.com$/i],
+        origin: "https://uqloads.xyz",
+        referer: "https://uqloads.xyz/",
+    },
+    {
+        patterns: [/\.streamcdn\.com$/i],
+        origin: "https://anime.uniquestream.net",
+        referer: "https://anime.uniquestream.net/",
+    },
+    {
+        patterns: [
+            /\.raffaellocdn\.net$/i,
+            /\.feetcdn\.com$/i,
+            /clearskydrift45\.site$/i,
+        ],
+        origin: "https://kerolaunochan.online",
+        referer: "https://kerolaunochan.online/",
+    },
+    {
+        patterns: [
+            /dewbreeze84\.online$/i,
+            /cloudydrift38\.site$/i,
+            /sunshinerays93\.live$/i,
+            /clearbluesky72\.wiki$/i,
+            /breezygale56\.online$/i,
+            /frostbite27\.pro$/i,
+            /frostywinds57\.live$/i,
+            /icyhailstorm64\.wiki$/i,
+            /icyhailstorm29\.online$/i,
+            /windflash93\.xyz$/i,
+            /stormdrift27\.site$/i,
+            /tempestcloud61\.wiki$/i,
+            /sunburst66\.pro$/i,
+            /douvid\.xyz$/i,
+        ],
+        origin: "https://megacloud.blog",
+        referer: "https://megacloud.blog/",
+        customHeaders: { "cache-control": "no-cache", pragma: "no-cache" },
+    },
+    {
+        patterns: [/\.echovideo\.to$/i],
+        origin: "https://aniwave.se",
+        referer: "https://aniwave.se/",
+    },
+    {
+        patterns: [/\.vid-cdn\.xyz$/i],
+        origin: "https://anizone.to/",
+        referer: "https://anizone.to/",
+    },
+    {
+        patterns: [/\.1stkmgv1\.com$/i],
+        origin: "https://animeyy.com",
+        referer: "https://animeyy.com/",
+    },
+    {
+        patterns: [
+            /lightningspark77\.pro$/i,
+            /thunderwave48\.xyz$/i,
+            /stormwatch95\.site$/i,
+            /windyrays29\.online$/i,
+            /thunderstrike77\.online$/i,
+            /lightningflash39\.live$/i,
+            /cloudburst82\.xyz$/i,
+            /drizzleshower19\.site$/i,
+            /rainstorm92\.xyz$/i,
+        ],
+        origin: "https://megacloud.club",
+        referer: "https://megacloud.club/",
+    },
+    {
+        patterns: [
+            /cloudburst99\.xyz$/i,
+            /frostywinds73\.pro$/i,
+            /stormwatch39\.live$/i,
+            /sunnybreeze16\.live$/i,
+            /mistydawn62\.pro$/i,
+            /lightningbolt21\.live$/i,
+            /gentlebreeze85\.xyz$/i,
+        ],
+        origin: "https://videostr.net",
+        referer: "https://videostr.net/",
+    },
+    {
+        patterns: [/vmeas\.cloud$/i],
+        origin: "https://vidmoly.to",
+        referer: "https://vidmoly.to/",
+    },
+    {
+        patterns: [/nextwaveinitiative\.xyz$/i],
+        origin: "https://edgedeliverynetwork.org",
+        referer: "https://edgedeliverynetwork.org/",
+    },
+    {
+        patterns: [
+            /lightningbolts\.ru$/i,
+            /lightningbolt\.site$/i,
+            /vyebzzqlojvrl\.top$/i,
+        ],
+        origin: "https://vidsrc.cc",
+        referer: "https://vidsrc.cc/",
+    },
+    {
+        patterns: [/vidlvod\.store$/i],
+        origin: "https://vidlink.pro",
+        referer: "https://vidlink.pro/",
+    },
+    {
+        patterns: [/sunnybreeze16\.live$/i],
+        origin: "https://megacloud.store",
+        referer: "https://megacloud.store/",
+    },
+    {
+        patterns: [
+            /heatwave90\.pro$/i,
+            /humidmist27\.wiki$/i,
+            /frozenbreeze65\.live$/i,
+            /drizzlerain73\.online$/i,
+            /sunrays81\.xyz$/i,
+        ],
+        origin: "https://kerolaunochan.live",
+        referer: "https://kerolaunochan.live/",
+    },
+    {
+        patterns: [/\.vkcdn5\.com$/i],
+        origin: "https://vkspeed.com",
+        referer: "https://vkspeed.com/",
+    },
+    {
+        patterns: [/embed\.su$/i, /usbigcdn\.cc$/i, /\.congacdn\.cc$/i],
+        origin: "https://embed.su",
+        referer: "https://embed.su/",
+    },
+    {
+        patterns: [/hls\.kr$/i, /hls\.kr\.direct$/i],
+        origin: "https://hls.kr",
+        referer: "https://hls.kr/",
+    },
+    {
+        patterns: [/(?:^|\.)vidhosters\.com$/i],
+        origin: "https://vidhosters.com",
+        referer: "https://vidhosters.com/",
+    },
+    {
+        patterns: [/(?:^|\.)pahe\.la$/i, /(?:^|\.)pahe\.li$/i],
+        origin: "https://pahe.la",
+        referer: "https://pahe.la/",
+    },
+];
+
+function generateHeadersForUrl(
+    url: URL,
+    customOrigin?: string
+): Record<string, string> {
+    const headers: Record<string, string> = { ...DEFAULT_HEADERS };
+
+    if (customOrigin) {
+        headers["origin"] = customOrigin;
+        headers["referer"] = customOrigin.endsWith("/")
+            ? customOrigin
+            : `${customOrigin}/`;
+        return headers;
+    }
+
+    const hostname = url.hostname;
+    const group = DOMAIN_GROUPS.find((g) =>
+        g.patterns.some((re) => re.test(hostname))
+    );
+
+    if (group) {
+        headers["origin"] = group.origin;
+        headers["referer"] = group.referer;
+        if (group.customHeaders) {
+            Object.assign(headers, group.customHeaders);
+        }
+    } else {
+        const origin = url.origin;
+        headers["origin"] = origin;
+        headers["referer"] = `${origin}/`;
+    }
+
+    return headers;
+}
+
+// ─── CORS constants ───────────────────────────────────────────────────────────
+const CORS_HEADERS: Record<string, string> = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS, HEAD",
+    "Access-Control-Allow-Headers":
+        "Content-Type, Authorization, Range, X-Requested-With, Origin, Referer, Accept, Accept-Encoding, Accept-Language, Cache-Control, Pragma, Sec-Fetch-Dest, Sec-Fetch-Mode, Sec-Fetch-Site, Sec-Ch-Ua, Sec-Ch-Ua-Mobile, Sec-Ch-Ua-Platform, Connection",
+    "Access-Control-Expose-Headers":
+        "Content-Length, Content-Range, Accept-Ranges, Content-Type, Cache-Control, Expires, Vary, ETag, Last-Modified",
+    "Access-Control-Max-Age": "86400",
+    "Cross-Origin-Resource-Policy": "cross-origin",
+    Vary: "Origin",
+};
+
+const PASSTHROUGH_HEADERS = new Set([
+    "content-type",
+    "content-length",
+    "content-range",
+    "accept-ranges",
+    "cache-control",
+    "expires",
+    "last-modified",
+    "etag",
+    "vary",
+]);
+
+// Headers to remove from the upstream response before sending to client
+const BLACKLIST_HEADERS = [
+    "vary",
+    "content-encoding",
+    "transfer-encoding",
+    "content-length",
+    "connection",
+    "server",
+];
+
+function resolveUrl(line: string, base: URL): URL {
+    try {
+        return new URL(line);
+    } catch {
+        return new URL(line, base);
+    }
+}
+
+function buildProxyQuery(url: URL, originParam?: string, debugEnabled = false): string {
+    const params = new URLSearchParams({
+        url: url.href,
+    });
+
+    if (originParam) {
+        params.set("origin", originParam);
+    }
+
+    if (debugEnabled) {
+        params.set("debug", "1");
+    }
+
+    return params.toString();
+}
+
+function extractManifestDebug(textBody: string) {
+    const lines = textBody.split("\n").map((line) => line.replace(/\r$/, ""));
+    const streamLines = lines.filter((line) => line.startsWith("#EXT-X-STREAM-INF"));
+    const codecs = streamLines
+        .map((line) => line.match(/CODECS="([^"]+)"/)?.[1] ?? null)
+        .filter((value): value is string => Boolean(value));
+
+    return {
+        lineCount: lines.length,
+        variantCount: streamLines.length,
+        codecs: [...new Set(codecs)].slice(0, 8),
+        preview: lines.filter((line) => line.startsWith("#EXT")).slice(0, 8),
+    };
+}
+
+function processM3u8Line(
+    line: string,
+    scrapeUrl: URL,
+    originParam?: string,
+    debugEnabled = false,
+): string {
+    if (line.length === 0) return "";
+
+    if (line[0] === "#") {
+        if (line.startsWith("#EXT-X-KEY")) {
+            const uriStart = line.indexOf('URI="');
+            if (uriStart !== -1) {
+                const keyUriStart = uriStart + 5;
+                const quotePos = line.indexOf('"', keyUriStart);
+                if (quotePos !== -1) {
+                    const keyUri = line.slice(keyUriStart, quotePos);
+                    const resolved = resolveUrl(keyUri, scrapeUrl);
+                    const q = buildProxyQuery(resolved, originParam, debugEnabled);
+                    return `${line.slice(0, keyUriStart)}/?${q}${line.slice(quotePos)}`;
+                }
+            }
+            return line;
+        }
+
+        if (line.startsWith('#EXT-X-MAP:URI="')) {
+            const innerUrl = line.slice(16, line.length - 1);
+            const resolved = resolveUrl(innerUrl, scrapeUrl);
+            const q = buildProxyQuery(resolved, originParam, debugEnabled);
+            return `#EXT-X-MAP:URI="/?${q}"`;
+        }
+
+        if (line.length > 20 && (line.includes("URI=") || line.includes("URL="))) {
+            const colonPos = line.indexOf(":");
+            if (colonPos !== -1) {
+                const prefix = line.slice(0, colonPos + 1);
+                const attrs = line.slice(colonPos + 1);
+                const rewrittenAttrs = attrs.split(",").map((attr) => {
+                    const eqPos = attr.indexOf("=");
+                    if (eqPos === -1) return attr;
+                    const key = attr.slice(0, eqPos).trim();
+                    const value = attr
+                        .slice(eqPos + 1)
+                        .trim()
+                        .replace(/^"|"$/g, "");
+                    if (key === "URI" || key === "URL") {
+                        const resolved = resolveUrl(value, scrapeUrl);
+                        const q = buildProxyQuery(resolved, originParam, debugEnabled);
+                        return `${key}="/?${q}"`;
+                    }
+                    return attr;
+                });
+                return prefix + rewrittenAttrs.join(",");
+            }
+        }
+
+        return line;
+    }
+
+    const resolved = resolveUrl(line, scrapeUrl);
+    const q = buildProxyQuery(resolved, originParam, debugEnabled);
+    return `/?${q}`;
+}
+
+// ─── Watch Order Helpers ───────────────────────────────────────────────────────
+
+async function getMalIdFromAnilistId(anilistId: number): Promise<number | null> {
+    const query = `
+    query ($id: Int) {
+      Media (id: $id, type: ANIME) {
+        idMal
+      }
+    }
+    `;
+    try {
+        const response = await fetch("https://graphql.anilist.co", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                Accept: "application/json",
+            },
+            body: JSON.stringify({
+                query,
+                variables: { id: anilistId },
+            }),
+        });
+        const data = await response.json();
+        return data?.data?.Media?.idMal || null;
+    } catch (err) {
+        console.error("AniList API error:", err);
+        return null;
+    }
+}
+
+async function scrapeWatchOrder(malId: number) {
+    const url = `https://chiaki.site/?/tools/watch_order/id/${malId}`;
+    try {
+        const response = await fetch(url, {
+            headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+        });
+
+        if (!response.ok) return null;
+        const html = await response.text();
+
+        const entries: any[] = [];
+        // Match TR tags that have data-id
+        const trRegex = /<tr[^>]+data-id="(\d+)"[^>]*>([\s\S]*?)<\/tr>/g;
+        let match;
+
+        while ((match = trRegex.exec(html)) !== null) {
+            const trTag = match[0];
+            const content = match[2];
+
+            // Extract attributes from the tr tag itself
+            const idAttr = trTag.match(/data-id="(\d+)"/);
+            const typeAttr = trTag.match(/data-type="(\d+)"/);
+            const epsAttr = trTag.match(/data-eps="(\d+)"/);
+            const anilistIdAttr = trTag.match(/data-anilist-id="(\d*)"/);
+
+            if (!idAttr || !typeAttr) continue;
+
+            const type = parseInt(typeAttr[1]);
+            // Filter: TV (1) and Movie (3)
+            if (type !== 1 && type !== 3) continue;
+
+            const titleMatch = content.match(/<span class="wo_title">([\s\S]*?)<\/span>/);
+            const secondaryTitleMatch = content.match(/<span class="uk-text-small">([\s\S]*?)<\/span>/);
+            const imageMatch = content.match(/style="background-image:url\('([^']+)'\)"/);
+            const metaMatch = content.match(/<span class="wo_meta">([\s\S]*?)<\/span>/);
+            const ratingMatch = content.match(/<span class="wo_rating">([\s\S]*?)<\/span>/);
+
+            const metaRaw = metaMatch ? metaMatch[1].replace(/<[^>]*>?/gm, '').replace(/\s+/g, ' ').trim() : "";
+            const parts = metaRaw.split('|').map(p => p.trim()).filter(p => p && !p.includes('★'));
+
+            let episodesCount = null;
+            let duration = null;
+            const epInfo = parts[2] || "";
+            if (epInfo.includes('×')) {
+                const [e, d] = epInfo.split('×').map(s => s.trim());
+                episodesCount = e;
+                duration = d;
+            } else if (epInfo) {
+                duration = epInfo;
+            }
+
+            entries.push({
+                malId: parseInt(idAttr[1]),
+                anilistId: anilistIdAttr && anilistIdAttr[1] ? parseInt(anilistIdAttr[1]) : null,
+                title: titleMatch ? titleMatch[1].trim() : "Unknown",
+                secondaryTitle: secondaryTitleMatch ? secondaryTitleMatch[1].trim() : null,
+                type: type === 1 ? "TV" : "Movie",
+                episodes: epsAttr ? parseInt(epsAttr[1]) : 0,
+                image: imageMatch ? `https://chiaki.site/${imageMatch[1]}` : null,
+                metadata: {
+                    date: parts[0] || null,
+                    type: parts[1] || null,
+                    episodes: episodesCount,
+                    duration: duration
+                },
+                rating: ratingMatch ? ratingMatch[1].trim() : null
+            });
+        }
+
+        return entries;
+    } catch (err) {
+        console.error("Scraping error:", err);
+        return null;
+    }
+}
+
+// ─── Hono app ─────────────────────────────────────────────────────────────────
+const app = new Hono();
+
+// Forward options to handle preflights
+app.options("*", (c) => c.body(null, 204, CORS_HEADERS));
+
+function handleInfo(c: any) {
+    return c.json({
+        name: "Anime Proxy",
+        version: "1.1.0",
+        description: "High-performance M3U8 and binary proxy for anime streaming.",
+        status: "Online",
+        endpoints: {
+            proxy: {
+                path: "/api",
+                method: "GET | POST",
+                description: "Main proxy route. Expects 'url' parameter.",
+                status: "Operational"
+            },
+            watch_order: {
+                path: "/api/watch-order",
+                method: "GET",
+                description: "Scrape watch order from chiaki.site using AniList ID.",
+                status: "Operational"
+            },
+            debug_manifest: {
+                path: "/api/debug-manifest",
+                method: "GET",
+                description: "Analyse M3U8 manifest structure and debug segments.",
+                status: "Operational"
+            },
+            info: {
+                path: "/api/info",
+                method: "GET",
+                description: "Project metadata and endpoint documentation.",
+                status: "Operational"
+            }
+        }
+    }, 200, CORS_HEADERS);
+}
+
+app.get("/api/info", handleInfo);
+app.get("/info", handleInfo);
+
+app.get("/api/watch-order", async (c) => {
+    const anilistIdRaw = c.req.query("id");
+    if (!anilistIdRaw) {
+        return c.json({ error: "Missing anilistId parameter" }, 400, CORS_HEADERS);
+    }
+
+    const anilistId = parseInt(anilistIdRaw);
+    if (isNaN(anilistId)) {
+        return c.json({ error: "Invalid anilistId" }, 400, CORS_HEADERS);
+    }
+
+    // 1. Convert AniList ID to MAL ID
+    const malId = await getMalIdFromAnilistId(anilistId);
+    if (!malId) {
+        return c.json({ error: "Could not find MAL ID for this AniList ID" }, 404, CORS_HEADERS);
+    }
+
+    // 2. Scrape watch order from chiaki.site
+    const watchOrder = await scrapeWatchOrder(malId);
+    if (!watchOrder) {
+        return c.json({ error: "Failed to fetch watch order data" }, 502, CORS_HEADERS);
+    }
+
+    // 3. Return clean JSON with caching
+    return c.json(watchOrder, 200, {
+        ...CORS_HEADERS,
+        "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=600",
+    });
+});
+
+app.get("/api/debug-manifest", async (c) => {
+    const targetUrlRaw = c.req.query("url");
+    if (!targetUrlRaw) {
+        return c.json({ error: "Missing url parameter" }, 400, CORS_HEADERS);
+    }
+
+    let targetUrl: URL;
+    try {
+        targetUrl = new URL(targetUrlRaw);
+    } catch {
+        return c.json({ error: "Invalid url parameter" }, 400, CORS_HEADERS);
+    }
+
+    const originParam = c.req.query("origin");
+    const upstreamHeaders = generateHeadersForUrl(targetUrl, originParam);
+
+    try {
+        const upstream = await fetch(targetUrl.href, {
+            headers: upstreamHeaders,
+            redirect: "manual",
+        });
+        const contentType = upstream.headers.get("content-type") ?? "";
+        const textBody = await upstream.text();
+
+        return c.json({
+            upstreamUrl: targetUrl.href,
+            origin: originParam ?? null,
+            contentType,
+            status: upstream.status,
+            ...extractManifestDebug(textBody),
+        }, 200, CORS_HEADERS);
+    } catch (err) {
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        return c.json({ error: errorMessage }, 502, CORS_HEADERS);
+    }
+});
+
+// Main handler for both GET and POST
+app.all("*", async (c) => {
+    const method = c.req.method;
+    if (method !== "GET" && method !== "POST") {
+        return c.text("Method not allowed", 405, CORS_HEADERS);
+    }
+
+    const path = c.req.path;
+    const targetUrlRaw = c.req.query("url");
+    const originParam = c.req.query("origin");
+    const debugEnabled = c.req.query("debug") === "1";
+
+    // ── Handle requests without 'url' param ────────────────────────────
+    if (!targetUrlRaw) {
+        if (path === "/" || path === "/api" || path === "/api/") {
+            return handleInfo(c);
+        }
+
+        // Attempt relative redirection using the last host cookie
+        const lastHost = getCookie(c, "_last_requested");
+        if (lastHost) {
+            const remainingPath = path.startsWith("/api") ? path.slice(4) : path;
+            const separator = remainingPath.startsWith("/") ? "" : "/";
+            const redirectTarget = new URL(lastHost + separator + remainingPath);
+            const redirectUrl = `/?${buildProxyQuery(redirectTarget, undefined, debugEnabled)}`;
+            return c.redirect(redirectUrl);
+        }
+
+        return c.text("Missing URL parameter", 400, CORS_HEADERS);
+    }
+
+    // ── Validate target URL ─────────────────────────────────────────────
+    let targetUrl: URL;
+    try {
+        targetUrl = new URL(targetUrlRaw);
+    } catch {
+        return c.text(`Invalid URL: ${targetUrlRaw}`, 400, CORS_HEADERS);
+    }
+
+    const headersParam = c.req.query("headers");
+    const jsonParam = c.req.query("json");
+
+    // ── Build upstream request ──────────────────────────────────────────
+    const upstreamHeaders = generateHeadersForUrl(targetUrl, originParam);
+
+    // Forward client headers (Range, etc.)
+    const clientHeaders = c.req.raw.headers;
+    for (const h of ["range", "if-range", "if-none-match", "if-modified-since"]) {
+        const val = clientHeaders.get(h);
+        if (val) upstreamHeaders[h] = val;
+    }
+
+    // Add custom headers from query
+    if (headersParam) {
+        try {
+            const parsed = JSON.parse(headersParam);
+            for (const [k, v] of Object.entries(parsed)) {
+                upstreamHeaders[k.toLowerCase()] = String(v);
+            }
+        } catch { /* ignore */ }
+    }
+
+    // Handle POST data
+    let body: any = null;
+    if (method === "POST") {
+        if (jsonParam) {
+            body = jsonParam;
+            upstreamHeaders["content-type"] = "application/json";
+        } else {
+            body = await c.req.arrayBuffer();
+        }
+    }
+
+    // ── Fetch upstream ──────────────────────────────────────────────────
+    let upstream: Response;
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 15000); // 15s timeout
+
+        upstream = await fetch(targetUrl.href, {
+            method,
+            headers: upstreamHeaders,
+            body,
+            redirect: "manual",
+            signal: controller.signal,
+        });
+        clearTimeout(timeout);
+    } catch (err) {
+        console.error(`[Proxy Error] Failed to fetch ${targetUrl.href}:`, err);
+        const errorMessage = err instanceof Error ? err.message : String(err);
+        return c.text(`Fetch failed: ${errorMessage}`, 502, CORS_HEADERS);
+    }
+
+    // Store the base URL in a cookie to help with subsequent relative requests
+    const urlBase = `${targetUrl.protocol}//${targetUrl.host}${targetUrl.pathname.substring(0, targetUrl.pathname.lastIndexOf("/"))}`;
+    setCookie(c, "_last_requested", urlBase, {
+        maxAge: 3600,
+        httpOnly: true,
+        path: "/",
+        sameSite: "Lax",
+    });
+
+    // ── Handle Redirects ────────────────────────────────────────────────
+    if (upstream.status >= 300 && upstream.status < 400) {
+        const location = upstream.headers.get("location");
+        if (location) {
+            const resolvedLocation = resolveUrl(location, targetUrl);
+            const proxiedLocation = `/?url=${encodeURIComponent(resolvedLocation.href)}`;
+            return c.redirect(proxiedLocation, upstream.status as any);
+        }
+    }
+
+    // ── Build Response Headers ──────────────────────────────────────────
+    const responseHeaders: Record<string, string> = { ...CORS_HEADERS };
+    for (const [name, value] of upstream.headers.entries()) {
+        const lowerName = name.toLowerCase();
+        if (!BLACKLIST_HEADERS.includes(lowerName)) {
+            responseHeaders[name] = value;
+        }
+    }
+
+    // Force cache media segments on Vercel Edge to heavily reduce Fast Origin Transfer
+    // Since these are video segments, they are immutable and can be cached long-term.
+    responseHeaders["Cache-Control"] = "public, max-age=31536000, s-maxage=31536000, immutable";
+
+    const contentType = (upstream.headers.get("content-type") ?? "").toLowerCase();
+    const isM3u8ByContentType =
+        contentType.includes("mpegurl") ||
+        contentType.includes("application/vnd.apple.mpegurl") ||
+        contentType.includes("application/x-mpegurl");
+    const isM3u8ByUrl = targetUrl.pathname.toLowerCase().endsWith(".m3u8");
+
+    // ── M3U8 rewriting path ─────────────────────────────────────────────
+    if (isM3u8ByContentType || isM3u8ByUrl) {
+        try {
+            const textBody = await upstream.text();
+            if (!textBody || textBody.length === 0) {
+                return c.body(null, upstream.status as ContentfulStatusCode, responseHeaders);
+            }
+
+            const looksLikeM3u8 = textBody.trimStart().startsWith("#EXTM3U");
+
+            if (isM3u8ByContentType || looksLikeM3u8) {
+                const rewritten = textBody
+                    .split("\n")
+                    .map((line) => processM3u8Line(line.replace(/\r$/, ""), targetUrl, originParam))
+                    .join("\n");
+
+                return c.body(rewritten, upstream.status as ContentfulStatusCode, {
+                    ...responseHeaders,
+                    "Content-Type": "application/vnd.apple.mpegurl",
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                });
+            }
+            return c.body(textBody, upstream.status as ContentfulStatusCode, responseHeaders);
+        } catch (err) {
+            console.error(`[Proxy Error] M3U8 processing failed for ${targetUrl.href}:`, err);
+            return c.text("M3U8 processing failed", 500, CORS_HEADERS);
+        }
+    }
+
+    // ── Passthrough (binary segments, etc.) ─────────────────────────────
+    return c.body(upstream.body as ReadableStream, upstream.status as ContentfulStatusCode, responseHeaders);
+});
+
+export default handle(app);
