@@ -1,5 +1,5 @@
 // api/animex-stream.js
-// Animex.one stream extraction - NO DDoS protection!
+// Animex.one stream extraction - DIRECT URL (no search needed!)
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -16,119 +16,96 @@ export default async function handler(req, res) {
   }
   
   try {
-    console.log(`Animex.one: "${animeId}" Episode ${episodeNum}`);
+    console.log(`Animex.one: ${animeId} Ep ${episodeNum}`);
     
-    // Step 1: Search for anime
-    const searchUrl = `https://animex.one/search?keyword=${encodeURIComponent(animeId)}`;
-    console.log(`Searching: ${searchUrl}`);
+    // Try direct URL first (most reliable)
+    const animeUrl = `https://animex.one/anime/${animeId}`;
+    console.log(`Direct URL: ${animeUrl}`);
     
-    const searchRes = await fetch(searchUrl, {
+    const animeRes = await fetch(animeUrl, { 
       headers: { 
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
         'Accept': 'text/html,application/xhtml+xml',
         'Referer': 'https://animex.one/'
-      }
+      } 
     });
     
-    if (!searchRes.ok) {
-      return res.status(500).json({ success: false, error: `Search failed: ${searchRes.status}` });
+    if (!animeRes.ok) {
+      // Try with dashes replaced by spaces
+      const altAnimeId = animeId.replace(/-/g, ' ');
+      const altUrl = `https://animex.one/anime/${encodeURIComponent(altAnimeId)}`;
+      console.log(`Trying alternative: ${altUrl}`);
+      
+      const altRes = await fetch(altUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+      if (!altRes.ok) {
+        return res.status(404).json({ 
+          success: false, 
+          error: `Anime not found. Try searching on animex.one for the correct ID.`,
+          tried: [animeUrl, altUrl]
+        });
+      }
     }
     
-    const searchHtml = await searchRes.text();
-    console.log(`Search results: ${searchHtml.length} bytes`);
+    const animeHtml = await (animeRes.ok ? animeRes : altRes).text();
+    console.log(`Anime page: ${animeHtml.length} bytes`);
     
-    // Extract anime URL - try multiple patterns
-    const patterns = [
-      /href=["']\/anime\/([^"']+)["']/i,
-      /href=["'](https:\/\/animex\.one\/anime\/[^"']+)["']/i
+    // Find episode list
+    const epPatterns = [
+      new RegExp(`href=["'](/episode/[^"']*${episodeNum}[^"']*)["']`, 'i'),
+      new RegExp(`href=["'](/watch/[^"']*${episodeNum}[^"']*)["']`, 'i'),
+      /href=["']\/episode\/([^"']+)["']/i
     ];
     
-    let animeSlug = null;
-    for (const pattern of patterns) {
-      const match = searchHtml.match(pattern);
+    let episodePath = null;
+    for (const pattern of epPatterns) {
+      const match = animeHtml.match(pattern);
       if (match) {
-        animeSlug = match[1];
-        console.log(`Found slug: ${animeSlug}`);
+        episodePath = match[1];
+        console.log(`Found episode path: ${episodePath}`);
         break;
       }
     }
     
-    if (!animeSlug) {
+    if (!episodePath) {
       return res.status(404).json({ 
         success: false, 
-        error: 'Anime not found. Try a different search term.',
-        debug: { searched: animeId, pageSize: searchHtml.length }
+        error: `Episode ${episodeNum} not found`,
+        anime: animeId
       });
     }
     
-    // Step 2: Fetch anime page
-    const animeUrl = `https://animex.one/anime/${animeSlug}`;
-    console.log(`Anime page: ${animeUrl}`);
+    const epUrl = `https://animex.one${episodePath}`;
+    console.log(`Episode: ${epUrl}`);
     
-    const animeRes = await fetch(animeUrl, { headers: { 'User-Agent': 'Mozilla/5.0' } });
-    const animeHtml = await animeRes.text();
-    
-    // Step 3: Find episode link
-    const epPatterns = [
-      new RegExp(`href=["']\/episode\\/([^"']*${episodeNum}[^"']*)["']`, 'i'),
-      new RegExp(`href=["']\/watch\\/([^"']*${episodeNum}[^"']*)["']`, 'i'),
-      /href=["']\/episode\/([^"']+)["']/gi
-    ];
-    
-    let episodeSlug = null;
-    for (const pattern of epPatterns) {
-      const matches = pattern.exec(animeHtml);
-      if (matches) {
-        episodeSlug = matches[1];
-        console.log(`Found episode: ${episodeSlug}`);
-        break;
-      }
-    }
-    
-    if (!episodeSlug) {
-      return res.status(404).json({ success: false, error: `Episode ${episodeNum} not found` });
-    }
-    
-    const epUrl = `https://animex.one/episode/${episodeSlug}`;
-    console.log(`Episode page: ${epUrl}`);
-    
-    // Step 4: Fetch episode page
+    // Fetch episode page
     const epRes = await fetch(epUrl, { 
       headers: { 
         'User-Agent': 'Mozilla/5.0',
         'Referer': 'https://animex.one/'
       } 
     });
-    const epHtml = await epRes.text();
     
-    // Step 5: Extract video URL
-    const videoPatterns = [
-      /["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i,
-      /["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i,
-      /file:\s*["']([^"']+\.m3u8[^"']*)["']/i,
-      /source\s+src=["']([^"']+\.m3u8[^"']*)["']/i,
-      /data-url=["']([^"']+\.m3u8[^"']*)["']/i
-    ];
-    
-    let videoUrl = null;
-    for (const pattern of videoPatterns) {
-      const match = epHtml.match(pattern);
-      if (match && match[1]) {
-        videoUrl = match[1];
-        console.log(`Found video: ${videoUrl.substring(0, 60)}...`);
-        break;
-      }
+    if (!epRes.ok) {
+      return res.status(404).json({ success: false, error: 'Episode page not accessible' });
     }
     
-    if (!videoUrl) {
+    const epHtml = await epRes.text();
+    
+    // Extract video URL
+    const videoMatch = epHtml.match(/["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i);
+    
+    if (!videoMatch) {
       return res.status(404).json({ 
         success: false, 
-        error: 'No video sources found',
-        debug: { episodePage: epUrl, pageSize: epHtml.length }
+        error: 'No video found',
+        debug: 'm3u8 not found in page'
       });
     }
     
-    // Create proxied URL
+    const videoUrl = videoMatch[1];
+    console.log(`Video: ${videoUrl.substring(0, 60)}...`);
+    
+    // Return proxied URL
     const proxiedUrl = `https://proxy-sigma-ten-63.vercel.app/api?url=${encodeURIComponent(videoUrl)}`;
     
     return res.status(200).json({
