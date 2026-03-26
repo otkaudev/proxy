@@ -31,14 +31,36 @@ export default async function handler(req, res) {
     // Build animepahe episode URL
     const episodeUrl = `https://animepahe.si/play/${animeId}/${episodeId}`;
     
-    // Fetch episode page
+    // Fetch episode page with better headers to bypass DDoS protection
     const response = await fetch(episodeUrl, {
       headers: {
-        'Referer': 'https://animepahe.si/',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
-      }
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0',
+        // Random realistic User-Agent
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0'
+      },
+      // Disable redirects to handle DDoS page
+      redirect: 'manual'
     });
+    
+    console.log(`Response status: ${response.status}`);
+    
+    // Check if we got redirected to DDoS protection
+    if (response.status === 301 || response.status === 302 || response.status === 403) {
+      console.error('Blocked by DDoS protection');
+      return res.status(503).json({
+        success: false,
+        error: 'Blocked by animepahe DDoS protection. Please try again later.',
+        status: response.status
+      });
+    }
     
     if (!response.ok) {
       console.error(`Failed to fetch episode page: ${response.status}`);
@@ -49,6 +71,16 @@ export default async function handler(req, res) {
     }
     
     const html = await response.text();
+    console.log(`Page size: ${html.length} bytes`);
+    
+    // Check if page contains DDoS protection
+    if (html.includes('DDoS-Guard') || html.includes('Checking your browser')) {
+      console.error('DDoS protection detected in response');
+      return res.status(503).json({
+        success: false,
+        error: 'DDoS protection detected. Animepahe is blocking automated requests.'
+      });
+    }
     
     // Extract video URL from page
     // Look for m3u8 or mp4 URLs in the page
@@ -56,7 +88,8 @@ export default async function handler(req, res) {
       /["'](https?:\/\/[^"']+\.m3u8[^"']*)["']/i,
       /["'](https?:\/\/[^"']+\.mp4[^"']*)["']/i,
       /file:\s*["']([^"']+\.m3u8[^"']*)["']/i,
-      /source\s+src=["']([^"']+\.m3u8[^"']*)["']/i
+      /source\s+src=["']([^"']+\.m3u8[^"']*)["']/i,
+      /data-src=["']([^"']+\.m3u8[^"']*)["']/i
     ];
     
     let videoUrl = null;
@@ -71,10 +104,16 @@ export default async function handler(req, res) {
     
     if (!videoUrl) {
       console.error('No video URL found in page');
+      // Return debug info
+      const hasPlayer = html.includes('video') || html.includes('player');
       return res.status(404).json({
         success: false,
         error: 'No video sources found. The episode may not be available.',
-        debug: 'Video URL not found in episode page'
+        debug: {
+          videoUrlFound: false,
+          pageHasPlayer: hasPlayer,
+          pageSize: html.length
+        }
       });
     }
     
@@ -89,10 +128,10 @@ export default async function handler(req, res) {
         streamUrl: proxiedUrl,
         originalUrl: videoUrl,
         referer: 'https://animepahe.si/',
-        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
         headers: {
           'Referer': 'https://animepahe.si/',
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0'
         }
       }
     });
